@@ -3,57 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milo Tracker Pro + Status History</title>
-    
+    <title>Oreo Tracker Pro</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
     <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
-
     <style>
         body { font-family: 'Segoe UI', sans-serif; margin: 0; background: #f0f2f5; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         .header { background: #2c3e50; color: white; padding: 10px; text-align: center; }
-        
         .stats-bar { display: grid; grid-template-columns: repeat(4, 1fr); background: white; padding: 10px; border-bottom: 1px solid #ddd; }
         .stat { text-align: center; border-right: 1px solid #eee; }
         .stat:last-child { border-right: none; }
         .label { font-size: 10px; color: #888; text-transform: uppercase; display: block; }
         .val { font-size: 14px; font-weight: bold; color: #333; }
-
         #map { flex-grow: 1; width: 100%; z-index: 1; }
-
-        /* Status Log Styles */
-        #status-log { height: 120px; background: #1e1e1e; color: #00ff00; font-family: 'Courier New', monospace; font-size: 11px; padding: 10px; overflow-y: scroll; border-top: 2px solid #444; }
-        .log-entry { margin-bottom: 4px; border-bottom: 1px solid #333; padding-bottom: 2px; }
-        .log-time { color: #888; margin-right: 8px; }
-
+        #status-log { height: 100px; background: #1e1e1e; color: #00ff00; font-family: monospace; font-size: 11px; padding: 10px; overflow-y: scroll; }
         .controls { padding: 10px; background: white; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; border-top: 1px solid #ddd; }
         button { border: none; padding: 10px 15px; border-radius: 20px; color: white; font-weight: bold; cursor: pointer; font-size: 12px; }
-        .btn-safe { background: #27ae60; }
-        .btn-walk { background: #f39c12; }
-        .btn-lost { background: #e74c3c; }
-        .btn-nav  { background: #4285F4; width: 100%; max-width: 300px; }
-        
-        .leaflet-routing-container { display: none; } /* Hide routing text instructions */
+        .btn-safe { background: #27ae60; } .btn-walk { background: #f39c12; } .btn-lost { background: #e74c3c; } .btn-nav { background: #4285F4; width: 100%; }
+        .leaflet-routing-container { display: none; }
     </style>
 </head>
 <body>
 
-<div class="header"><h3 style="margin:0;">🐾 Milo Live Tracker</h3></div>
+<div class="header"><h3 style="margin:0;">🐾 Oreo Live Tracker</h3></div>
 
 <div class="stats-bar">
     <div class="stat"><span class="label">Battery</span><span id="bat" class="val">--%</span></div>
-    <div class="stat"><span class="label">Distance</span><span id="dist" class="val">-- m</span></div>
+    <div class="stat"><span class="label">Dist</span><span id="dist" class="val">-- m</span></div>
     <div class="stat"><span class="label">Mode</span><span id="mode" class="val">WAIT</span></div>
-    <div class="stat"><span class="label">Status</span><span id="status" class="val" style="color:red;">OFFLINE</span></div>
+    <div class="stat"><span class="label">Tracker</span><span id="status" class="val" style="color:gray;">...</span></div>
 </div>
 
 <div id="map"></div>
-
-<div id="status-log">
-    <div class="log-entry"><span class="log-time">--:--</span> Initializing system...</div>
-</div>
+<div id="status-log"></div>
 
 <div class="controls">
     <button class="btn-safe" onclick="sendMode('SAFE')">🏠 SAFE</button>
@@ -63,103 +47,64 @@
 </div>
 
 <script>
-    const TOPIC_PUB = "Milo_99_XyZ_782_Safe_Tracker/location";
-    const TOPIC_SUB = "Milo_99_XyZ_782_Safe_Tracker/setMode";
+    const BASE_TOPIC = "Milo_99_XyZ_782_Safe_Tracker";
+    const TOPIC_LOC = BASE_TOPIC + "/location";
+    const TOPIC_STATUS = BASE_TOPIC + "/status";
+    const TOPIC_SUB = BASE_TOPIC + "/setMode";
 
-    let userPos = null;
-    let trackerPos = [14.5995, 120.9842]; 
-    let routingControl = null;
-    let isRoutingActive = false;
-    let hasNotified = false;
+    let userPos = null, trackerPos = [14.5995, 120.9842], routingControl = null, isRoutingActive = false;
 
-    // --- INITIALIZE LOG & NOTIFICATIONS ---
-    function addLog(message) {
-        const log = document.getElementById('status-log');
-        const now = new Date();
-        const timeStr = now.getHours().toString().padStart(2, '0') + ":" + now.getMinutes().toString().padStart(2, '0') + ":" + now.getSeconds().toString().padStart(2, '0');
+    function addLog(msg) {
         const entry = document.createElement('div');
-        entry.className = 'log-entry';
-        entry.innerHTML = `<span class="log-time">[${timeStr}]</span> ${message}`;
-        log.prepend(entry); // Newest at top
+        entry.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        document.getElementById('status-log').prepend(entry);
     }
 
-    window.onload = () => {
-        if ("Notification" in window) {
-            Notification.requestPermission().then(perm => {
-                if (perm === "granted") addLog("System: Notifications enabled.");
-            });
-        }
-    };
-
-    // --- MAP SETUP ---
     const map = L.map('map').setView(trackerPos, 15);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+    let trackerMarker = L.marker(trackerPos).addTo(map);
+    let userMarker = L.circleMarker([0,0], {radius: 8, color: 'blue'}).addTo(map);
 
-    let trackerMarker = L.marker(trackerPos).addTo(map).bindPopup("Milo");
-    let userMarker = L.circleMarker([0,0], {radius: 8, color: 'blue', fillColor: '#3388ff', fillOpacity: 0.8}).addTo(map);
-
-    // --- GET PHONE GPS ---
     if (navigator.geolocation) {
         navigator.geolocation.watchPosition(pos => {
             userPos = [pos.coords.latitude, pos.coords.longitude];
             userMarker.setLatLng(userPos);
             if (isRoutingActive) updateRoute();
             updateStats();
-        }, err => addLog("Error: Phone GPS Access Denied"), {enableHighAccuracy: true});
+        }, null, {enableHighAccuracy: true});
     }
 
-    // --- MQTT CONNECTION ---
     const client = new Paho.MQTT.Client("wss://broker.hivemq.com:8884/mqtt", "web_" + Math.random());
     
     client.onMessageArrived = (msg) => {
-        const data = JSON.parse(msg.payloadString);
-        trackerPos = [data.lat, data.lon];
-        trackerMarker.setLatLng(trackerPos);
-        
-        // Notifications & Logs
-        if (!hasNotified) {
-            new Notification("Milo is Online!", { body: "First location received." });
-            addLog("Milo: Connected and sending data.");
-            hasNotified = true;
+        if (msg.destinationName === TOPIC_STATUS) {
+            const status = msg.payloadString;
+            document.getElementById('status').innerText = status;
+            document.getElementById('status').style.color = (status === "ONLINE") ? "green" : "red";
+            addLog("Tracker is now " + status);
+        } else {
+            const data = JSON.parse(msg.payloadString);
+            trackerPos = [data.lat, data.lon];
+            trackerMarker.setLatLng(trackerPos);
+            let volt = parseFloat(data.bat);
+            let pct = Math.max(0, Math.min(100, Math.round(((volt - 3.4) / (4.2 - 3.4)) * 100)));
+            document.getElementById('bat').innerText = pct + "%";
+            document.getElementById('mode').innerText = data.mode;
+            updateStats();
         }
-
-        // Battery logic
-        let volt = parseFloat(data.bat);
-        let pct = Math.round(((volt - 3.4) / (4.2 - 3.4)) * 100);
-        pct = Math.max(0, Math.min(100, pct));
-        
-        document.getElementById('bat').innerText = pct + "%";
-        document.getElementById('mode').innerText = data.mode;
-        document.getElementById('status').innerText = "LIVE";
-        document.getElementById('status').style.color = "green";
-
-        if (pct < 20) addLog(`Warning: Battery low (${pct}%)`);
-        
-        if (isRoutingActive) updateRoute();
-        updateStats();
     };
 
     client.connect({useSSL:true, onSuccess: () => {
-        addLog("Network: Connected to MQTT Broker.");
-        document.getElementById('status').innerText = "ONLINE";
-        document.getElementById('status').style.color = "orange";
-        client.subscribe(TOPIC_PUB);
+        addLog("Web connected to broker.");
+        client.subscribe(TOPIC_LOC);
+        client.subscribe(TOPIC_STATUS);
     }});
 
-    // --- NAVIGATION & LOGIC ---
     function toggleRouting() {
-        if (!userPos) { alert("GPS not found!"); return; }
+        if (!userPos) return;
         isRoutingActive = !isRoutingActive;
-        const btn = document.getElementById('navBtn');
-        if (isRoutingActive) {
-            btn.innerText = "❌ STOP NAVIGATION"; btn.style.background = "#555";
-            updateRoute();
-            addLog("System: Pathfinding active.");
-        } else {
-            btn.innerText = "🚶 SHOW PATH TO MILO"; btn.style.background = "#4285F4";
-            if (routingControl) map.removeControl(routingControl);
-            addLog("System: Pathfinding disabled.");
-        }
+        if (isRoutingActive) { updateRoute(); addLog("Routing enabled."); }
+        else { if (routingControl) map.removeControl(routingControl); addLog("Routing disabled."); }
     }
 
     function updateRoute() {
@@ -173,17 +118,15 @@
     function updateStats() {
         if (!userPos || !trackerPos) return;
         const d = map.distance(userPos, trackerPos);
-        document.getElementById('dist').innerText = d > 1000 ? (d/1000).toFixed(1) + "km" : Math.round(d) + "m";
+        document.getElementById('dist').innerText = Math.round(d) + "m";
     }
 
     function sendMode(m) {
         let msg = new Paho.MQTT.Message(m);
         msg.destinationName = TOPIC_SUB;
         client.send(msg);
-        document.getElementById('mode').innerText = "SEND...";
-        addLog(`System: Requesting ${m} mode...`);
+        addLog("Requested mode: " + m);
     }
 </script>
-
 </body>
 </html>
