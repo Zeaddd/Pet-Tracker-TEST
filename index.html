@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milo Tracker Pro + Nav</title>
+    <title>Oreo Tracker Pro</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -13,20 +13,26 @@
     <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
 
     <style>
-        body { font-family: 'Segoe UI', sans-serif; margin: 0; background: #f0f2f5; display: flex; flex-direction: column; height: 100vh; }
-        .header { background: #2c3e50; color: white; padding: 10px; text-align: center; }
-        .stats-bar { display: grid; grid-template-columns: repeat(4, 1fr); background: white; padding: 10px; border-bottom: 1px solid #ddd; }
-        .stat { text-align: center; }
-        .label { font-size: 10px; color: #888; text-transform: uppercase; display: block; }
-        .val { font-size: 14px; font-weight: bold; color: #333; }
-        #map { flex-grow: 1; width: 100%; }
-        .controls { padding: 10px; background: white; display: flex; justify-content: center; gap: 5px; flex-wrap: wrap; }
-        button { border: none; padding: 10px 15px; border-radius: 20px; color: white; font-weight: bold; cursor: pointer; font-size: 12px; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; background: #f0f2f5; }
+        .header { background: #2c3e50; color: white; padding: 10px; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        
+        .stats-bar { display: grid; grid-template-columns: repeat(4, 1fr); background: white; padding: 12px; border-bottom: 1px solid #ddd; }
+        .stat { text-align: center; border-right: 1px solid #eee; }
+        .stat:last-child { border-right: none; }
+        .label { font-size: 10px; color: #888; text-transform: uppercase; display: block; margin-bottom: 4px; }
+        .val { font-size: 15px; font-weight: bold; color: #333; }
+
+        #map { flex-grow: 1; width: 100%; z-index: 1; }
+
+        .controls { padding: 15px; background: white; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; border-top: 1px solid #ddd; }
+        button { border: none; padding: 12px 18px; border-radius: 25px; color: white; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 13px; }
         .btn-safe { background: #27ae60; }
         .btn-walk { background: #f39c12; }
         .btn-lost { background: #e74c3c; }
-        .btn-nav  { background: #4285F4; width: 90%; margin-top: 5px; }
-        /* Hide the ugly text instructions from the map */
+        .btn-nav  { background: #4285F4; width: 100%; max-width: 320px; margin-top: 5px; }
+        button:active { transform: scale(0.95); opacity: 0.9; }
+
+        /* Hide the routing text instructions panel */
         .leaflet-routing-container { display: none; }
     </style>
 </head>
@@ -35,35 +41,42 @@
 <div class="header"><h3 style="margin:0;">🐾 Milo Live Tracker</h3></div>
 
 <div class="stats-bar">
-    <div class="stat"><span class="label">Battery</span><span id="bat" class="val">--V</span></div>
-    <div class="stat"><span class="label">Dist</span><span id="dist" class="val">-- m</span></div>
+    <div class="stat"><span class="label">Battery</span><span id="bat" class="val">--%</span></div>
+    <div class="stat"><span class="label">Distance</span><span id="dist" class="val">-- m</span></div>
     <div class="stat"><span class="label">Mode</span><span id="mode" class="val">WAIT</span></div>
-    <div class="stat"><span class="label">GPS</span><span id="status" class="val" style="color:red;">OFF</span></div>
+    <div class="stat"><span class="label">Status</span><span id="status" class="val" style="color:red;">OFFLINE</span></div>
 </div>
 
 <div id="map"></div>
 
 <div class="controls">
-    <button class="btn-safe" onclick="sendMode('SAFE')">SAFE</button>
-    <button class="btn-walk" onclick="sendMode('WALK')">WALK</button>
-    <button class="btn-lost" onclick="sendMode('LOST')">LOST</button>
+    <button class="btn-safe" onclick="sendMode('SAFE')">🏠 SAFE</button>
+    <button class="btn-walk" onclick="sendMode('WALK')">🦮 WALK</button>
+    <button class="btn-lost" onclick="sendMode('LOST')">🚨 LOST</button>
     <button class="btn-nav" id="navBtn" onclick="toggleRouting()">🚶 SHOW PATH TO MILO</button>
 </div>
 
 <script>
+    // --- PRIVATE TOPIC CONFIG (Must match ESP32) ---
+    const TOPIC_PUB = "Milo_99_XyZ_782_Safe_Tracker/location";
+    const TOPIC_SUB = "Milo_99_XyZ_782_Safe_Tracker/setMode";
+
     let userPos = null;
-    let trackerPos = [14.5995, 120.9842];
+    let trackerPos = [14.5995, 120.9842]; // Manila default
     let routingControl = null;
     let isRoutingActive = false;
 
     // --- MAP SETUP ---
     const map = L.map('map').setView(trackerPos, 15);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+    const lightMap = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+    const terrainMap = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png');
     
-    let trackerMarker = L.marker(trackerPos).addTo(map).bindPopup("Milo");
-    let userMarker = L.circleMarker([0,0], {radius: 7, color: 'blue', fillColor: '#3388ff', fillOpacity: 0.9}).addTo(map);
+    L.control.layers({"White": lightMap, "Terrain": terrainMap}).addTo(map);
 
-    // --- TRACK USER PHONE ---
+    let trackerMarker = L.marker(trackerPos).addTo(map).bindPopup("Milo");
+    let userMarker = L.circleMarker([0,0], {radius: 8, color: 'blue', fillColor: '#3388ff', fillOpacity: 0.8}).addTo(map).bindPopup("You");
+
+    // --- GET PHONE GPS ---
     if (navigator.geolocation) {
         navigator.geolocation.watchPosition(pos => {
             userPos = [pos.coords.latitude, pos.coords.longitude];
@@ -73,24 +86,39 @@
         }, null, {enableHighAccuracy: true});
     }
 
-    // --- MQTT ---
-    const client = new Paho.MQTT.Client("wss://broker.hivemq.com:8884/mqtt", "milo_web_" + Math.random());
+    // --- MQTT CONNECTION ---
+    const client = new Paho.MQTT.Client("wss://broker.hivemq.com:8884/mqtt", "web_" + Math.random());
+    
     client.onMessageArrived = (msg) => {
         const data = JSON.parse(msg.payloadString);
         trackerPos = [data.lat, data.lon];
+        
+        // Update Marker
         trackerMarker.setLatLng(trackerPos);
-        document.getElementById('bat').innerText = data.bat + "V";
-        document.getElementById('mode').innerText = data.mode.toUpperCase();
+        
+        // Battery % Calculation (Estimate: 3.4V = 0%, 4.2V = 100%)
+        let volt = parseFloat(data.bat);
+        let pct = Math.round(((volt - 3.4) / (4.2 - 3.4)) * 100);
+        pct = Math.max(0, Math.min(100, pct)); // Keep between 0-100
+        
+        document.getElementById('bat').innerText = pct + "%";
+        document.getElementById('mode').innerText = data.mode;
         document.getElementById('status').innerText = "LIVE";
         document.getElementById('status').style.color = "green";
+
         if (isRoutingActive) updateRoute();
         updateStats();
     };
-    client.connect({useSSL:true, onSuccess: () => client.subscribe("pet_tracker_Kevin_99/location")});
 
-    // --- ROUTING LOGIC ---
+    client.connect({useSSL:true, onSuccess: () => {
+        document.getElementById('status').innerText = "ONLINE";
+        document.getElementById('status').style.color = "orange";
+        client.subscribe(TOPIC_PUB);
+    }});
+
+    // --- NAVIGATION & DISTANCE LOGIC ---
     function toggleRouting() {
-        if (!userPos) { alert("Waiting for your phone GPS..."); return; }
+        if (!userPos) { alert("Waiting for your phone's GPS..."); return; }
         isRoutingActive = !isRoutingActive;
         const btn = document.getElementById('navBtn');
 
@@ -107,7 +135,6 @@
 
     function updateRoute() {
         if (!userPos || !trackerPos) return;
-        
         if (routingControl) map.removeControl(routingControl);
 
         routingControl = L.Routing.control({
@@ -115,8 +142,8 @@
             routeWhileDragging: false,
             addWaypoints: false,
             draggableWaypoints: false,
-            show: false, // Hides the text box
-            createMarker: function() { return null; } // Don't create extra markers
+            show: false,
+            createMarker: function() { return null; } 
         }).addTo(map);
     }
 
@@ -128,10 +155,11 @@
 
     function sendMode(m) {
         let msg = new Paho.MQTT.Message(m);
-        msg.destinationName = "pet_tracker_Kevin_99/setMode";
+        msg.destinationName = TOPIC_SUB;
         client.send(msg);
         document.getElementById('mode').innerText = "SEND...";
     }
 </script>
+
 </body>
 </html>
