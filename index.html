@@ -52,15 +52,38 @@
 
 <script>
     const BASE = "Milo_99_XyZ_782_Safe_Tracker";
-    let trackerPos = [14.5995, 120.9842], fenceCircle = null;
+    let trackerPos = [14.5995, 120.9842]; // Default start
+    let userPos = null;
+    let fenceCircle = null;
 
-    const map = L.map('map').setView(trackerPos, 16);
+    const map = L.map('map').setView(trackerPos, 13);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
-    let marker = L.marker(trackerPos).addTo(map);
+    let marker = L.marker(trackerPos).addTo(map).bindPopup("Milo");
+    let userMarker = L.circleMarker([0,0], {radius: 7, color: 'blue', fillColor: '#3388ff', fillOpacity: 0.9}).addTo(map).bindPopup("You");
 
     function addLog(m) {
         const el = document.getElementById('status-log');
         el.innerHTML = `[${new Date().toLocaleTimeString()}] ${m}<br>` + el.innerHTML;
+    }
+
+    // --- AUTO-CENTER TO USER ON LOAD ---
+    function centerToUser() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition((pos) => {
+                userPos = [pos.coords.latitude, pos.coords.longitude];
+                userMarker.setLatLng(userPos);
+                map.flyTo(userPos, 15);
+                addLog("Map: Centered to your device.");
+            }, (err) => {
+                addLog("Map: Could not get your location. Check browser permissions.");
+            });
+
+            // Continuous background update for user blue dot
+            navigator.geolocation.watchPosition((pos) => {
+                userPos = [pos.coords.latitude, pos.coords.longitude];
+                userMarker.setLatLng(userPos);
+            });
+        }
     }
 
     const client = new Paho.MQTT.Client("wss://broker.hivemq.com:8884/mqtt", "web_" + Math.random());
@@ -83,7 +106,10 @@
         }
     };
 
-    function centerMap() { map.flyTo(trackerPos, 18); }
+    function centerMap() { 
+        map.flyTo(trackerPos, 18); 
+        addLog("Map: Centering to Milo.");
+    }
 
     function toggleFence(active) {
         if (!active && fenceCircle) { map.removeLayer(fenceCircle); fenceCircle = null; }
@@ -113,7 +139,14 @@
 
     client.connect({useSSL:true, onSuccess: () => {
         client.subscribe(BASE + "/location"); client.subscribe(BASE + "/status");
+        addLog("Network: Connected.");
     }});
+
+    // Initialize location on start
+    window.onload = () => { 
+        centerToUser();
+        Notification.requestPermission(); 
+    };
 </script>
 </body>
 </html>
