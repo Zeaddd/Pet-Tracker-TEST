@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Milo Tracker Pro</title>
+    <title>Oreo Tracker Pro</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; margin: 0; background: #f0f2f5; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -17,25 +19,21 @@
         
         .controls { padding: 10px; background: white; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
         
-        /* Button Animations & Styles */
-        button { 
-            border: none; padding: 12px 16px; border-radius: 20px; color: white; 
-            font-weight: bold; cursor: pointer; font-size: 12px; 
-            transition: all 0.2s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
+        button { border: none; padding: 12px 16px; border-radius: 20px; color: white; font-weight: bold; cursor: pointer; font-size: 12px; transition: all 0.2s ease; }
         button:active { transform: scale(0.92); filter: brightness(0.8); }
 
-        .btn-center { background: #9b59b6; width: 100%; margin-bottom: 4px; }
-        .btn-safe { background: #7f8c8d; } /* Default gray when inactive */
-        .btn-walk { background: #7f8c8d; }
-        .btn-lost { background: #7f8c8d; }
+        .btn-center { background: #9b59b6; width: 48%; }
+        .btn-track { background: #3498db; width: 48%; }
+        .btn-mode { background: #7f8c8d; flex-grow: 1; }
 
-        /* Active Mode Colors */
-        .active-safe { background: #27ae60 !important; box-shadow: 0 0 10px #27ae60; }
-        .active-walk { background: #f39c12 !important; box-shadow: 0 0 10px #f39c12; }
-        .active-lost { background: #e74c3c !important; box-shadow: 0 0 10px #e74c3c; }
+        /* Active Mode Styles */
+        .active-SAFE { background: #27ae60 !important; }
+        .active-WALK { background: #f39c12 !important; }
+        .active-LOST { background: #e74c3c !important; }
+        .tracking-active { background: #2c3e50 !important; border: 2px solid #3498db; }
 
         input[type=range] { flex-grow: 1; margin: 0 10px; }
+        .leaflet-routing-container { display: none; } /* Hide the text turn-by-turn box */
     </style>
 </head>
 <body>
@@ -48,13 +46,12 @@
 <div class="fence-panel">
     <div class="fence-row">
         <b>Geofence Protection</b>
-        <span>Drag the <b style="color:#3498db">Blue Dot</b> to move fence</span>
         <input type="checkbox" id="fence-toggle" onchange="toggleFence(this.checked)">
     </div>
     <div class="fence-row">
-        <span>Size: <b id="fence-val">50</b>m</span>
+        <span>Size: <b id="fence-val">50</b>m | Dist: <b id="dist-val">--</b>m</span>
         <input type="range" min="20" max="500" value="50" onchange="updateFenceSize(this.value)">
-        <button onclick="setHome()" style="background:#34495e; padding:5px 10px;">📍 SET HOME</button>
+        <button onclick="setHome()" style="background:#34495e; padding:5px 10px;">📍 HOME</button>
     </div>
 </div>
 
@@ -62,20 +59,22 @@
 <div id="status-log"></div>
 
 <div class="controls">
-    <button class="btn-center" onclick="centerMap()">🎯 CENTER TO MILO</button>
-    <button id="mode-SAFE" class="btn-safe" onclick="sendMode('SAFE')">🏠 SAFE</button>
-    <button id="mode-WALK" class="btn-walk" onclick="sendMode('WALK')">🦮 WALK</button>
-    <button id="mode-LOST" class="btn-lost" onclick="sendMode('LOST')">🚨 LOST</button>
+    <button class="btn-center" onclick="centerMap()">🎯 CENTER OREO</button>
+    <button id="track-btn" class="btn-track" onclick="toggleTracking()">🚶 TRACK OREO</button>
+    <button id="mode-SAFE" class="btn-mode" onclick="sendMode('SAFE')">🏠 SAFE</button>
+    <button id="mode-WALK" class="btn-mode" onclick="sendMode('WALK')">🦮 WALK</button>
+    <button id="mode-LOST" class="btn-mode" onclick="sendMode('LOST')">🚨 LOST</button>
 </div>
 
 <script>
-    const BASE = "Milo_99_XyZ_782_Safe_Tracker";
+    const BASE = "Oreo_Safe_Tracker";
     let trackerPos = [14.5995, 120.9842], userPos = null;
-    let fenceCircle = null, homeMarker = null;
+    let fenceCircle = null, homeMarker = null, routingControl = null;
+    let isTracking = false;
 
     const map = L.map('map').setView(trackerPos, 13);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
-    let marker = L.marker(trackerPos).addTo(map).bindPopup("Milo");
+    let marker = L.marker(trackerPos).addTo(map).bindPopup("Oreo");
     let userMarker = L.circleMarker([0,0], {radius: 7, color: 'blue', fillColor: '#3388ff', fillOpacity: 0.9}).addTo(map);
 
     function addLog(m) {
@@ -83,43 +82,52 @@
         el.innerHTML = `[${new Date().toLocaleTimeString()}] ${m}<br>` + el.innerHTML;
     }
 
-    // --- DRAGGABLE FENCE LOGIC ---
+    // --- LIVE TRACKING LOGIC ---
+    function toggleTracking() {
+        isTracking = !isTracking;
+        const btn = document.getElementById('track-btn');
+        if (isTracking) {
+            btn.innerText = "🛑 STOP TRACKING";
+            btn.classList.add('tracking-active');
+            updateRoute();
+            addLog("Navigation: Tracking path to Oreo enabled.");
+        } else {
+            btn.innerText = "🚶 TRACK OREO";
+            btn.classList.remove('tracking-active');
+            if (routingControl) map.removeControl(routingControl);
+            addLog("Navigation: Path disabled.");
+        }
+    }
+
+    function updateRoute() {
+        if (!isTracking || !userPos || !trackerPos) return;
+        if (routingControl) map.removeControl(routingControl);
+        
+        routingControl = L.Routing.control({
+            waypoints: [L.latLng(userPos[0], userPos[1]), L.latLng(trackerPos[0], trackerPos[1])],
+            routeWhileDragging: false,
+            addWaypoints: false,
+            createMarker: function() { return null; }, // Don't add extra markers
+            lineOptions: { styles: [{ color: '#3498db', opacity: 0.8, weight: 6 }] }
+        }).addTo(map);
+    }
+
+    // --- GEOFENCE ---
     function setHome() {
         if (homeMarker) map.removeLayer(homeMarker);
         if (fenceCircle) map.removeLayer(fenceCircle);
-
-        // Create a draggable marker for the Home Center
         homeMarker = L.marker(trackerPos, {draggable: true}).addTo(map);
-        fenceCircle = L.circle(trackerPos, {
-            radius: document.getElementById('fence-val').innerText, 
-            color: '#3498db', fillOpacity: 0.1
-        }).addTo(map);
-
-        homeMarker.on('drag', function (e) {
-            let newPos = e.target.getLatLng();
-            fenceCircle.setLatLng(newPos);
-        });
-
-        homeMarker.on('dragend', function (e) {
-            let finalPos = e.target.getLatLng();
-            addLog("Fence: Moved to new location.");
-            // Send new home coordinates to ESP32
-            client.send(new Paho.MQTT.Message("SETHOME")).destinationName = BASE + "/setMode";
-        });
-
+        fenceCircle = L.circle(trackerPos, {radius: document.getElementById('fence-val').innerText, color: '#3498db'}).addTo(map);
+        homeMarker.on('drag', (e) => fenceCircle.setLatLng(e.target.getLatLng()));
+        homeMarker.on('dragend', () => client.send(new Paho.MQTT.Message("SETHOME")).destinationName = BASE + "/setMode");
         document.getElementById('fence-toggle').checked = true;
         client.send(new Paho.MQTT.Message("FENCE_ON")).destinationName = BASE + "/setMode";
-        addLog("Home set. Drag the blue marker to adjust!");
+        addLog("Fence: Home set and draggable.");
     }
 
     function toggleFence(active) {
-        if (!active) {
-            if(fenceCircle) map.removeLayer(fenceCircle);
-            if(homeMarker) map.removeLayer(homeMarker);
-            fenceCircle = null; homeMarker = null;
-        }
+        if (!active && fenceCircle) { map.removeLayer(fenceCircle); map.removeLayer(homeMarker); }
         client.send(new Paho.MQTT.Message(active ? "FENCE_ON" : "FENCE_OFF")).destinationName = BASE + "/setMode";
-        addLog("Geofence " + (active ? "Enabled" : "Disabled"));
     }
 
     function updateFenceSize(val) {
@@ -128,20 +136,7 @@
         client.send(new Paho.MQTT.Message("FENCE:"+val)).destinationName = BASE + "/setMode";
     }
 
-    // --- MODE BUTTON ANIMATION ---
-    function updateUI(activeMode) {
-        // Reset all buttons
-        document.getElementById('mode-SAFE').className = 'btn-safe';
-        document.getElementById('mode-WALK').className = 'btn-walk';
-        document.getElementById('mode-LOST').className = 'btn-lost';
-
-        // Set active button
-        if(activeMode === "SAFE") document.getElementById('mode-SAFE').className = 'btn-safe active-safe';
-        if(activeMode === "WALK") document.getElementById('mode-WALK').className = 'btn-walk active-walk';
-        if(activeMode === "LOST") document.getElementById('mode-LOST').className = 'btn-lost active-lost';
-        if(activeMode === "ESCAPE") document.getElementById('mode-LOST').className = 'btn-lost active-lost';
-    }
-
+    // --- MQTT & UPDATES ---
     const client = new Paho.MQTT.Client("wss://broker.hivemq.com:8884/mqtt", "web_" + Math.random());
     client.onMessageArrived = (msg) => {
         if (msg.destinationName.includes("status")) {
@@ -151,33 +146,39 @@
         } else {
             const data = JSON.parse(msg.payloadString);
             document.getElementById('gps-status').innerText = data.gps;
-            updateUI(data.mode);
+            
+            // Update Active Button UI
+            document.querySelectorAll('.btn-mode').forEach(b => b.classList.remove('active-SAFE', 'active-WALK', 'active-LOST'));
+            const activeBtn = document.getElementById('mode-' + data.mode);
+            if (activeBtn) activeBtn.classList.add('active-' + data.mode);
 
             if (data.lat && data.lon) {
                 trackerPos = [data.lat, data.lon];
                 marker.setLatLng(trackerPos);
-                if (data.mode === "ESCAPE") {
-                    addLog("🚨 ESCAPE DETECTED!");
-                    if(fenceCircle) fenceCircle.setStyle({color: 'red', fillColor: 'red'});
-                }
+                if (isTracking) updateRoute();
+                updateDistance();
             }
         }
     };
 
-    function centerMap() { map.flyTo(trackerPos, 18); }
-    function sendMode(m) { 
-        client.send(new Paho.MQTT.Message(m)).destinationName = BASE + "/setMode"; 
-        updateUI(m);
-        addLog("Mode: " + m);
+    function updateDistance() {
+        if (userPos && trackerPos) {
+            const d = map.distance(userPos, trackerPos);
+            document.getElementById('dist-val').innerText = Math.round(d);
+        }
     }
+
+    function centerMap() { map.flyTo(trackerPos, 18); }
+    function sendMode(m) { client.send(new Paho.MQTT.Message(m)).destinationName = BASE + "/setMode"; }
 
     client.connect({useSSL:true, onSuccess: () => {
         client.subscribe(BASE + "/location"); client.subscribe(BASE + "/status");
-        // Center on user on load
         if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(p => {
+            navigator.geolocation.watchPosition(p => {
                 userPos = [p.coords.latitude, p.coords.longitude];
-                map.setView(userPos, 15);
+                userMarker.setLatLng(userPos);
+                if (isTracking) updateRoute();
+                updateDistance();
             });
         }
     }});
