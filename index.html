@@ -1,182 +1,123 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Oreo Tracker Elite</title>
-    
+    <title>Oreo Elite Tracker</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
-    
     <style>
-        :root { --primary: #007AFF; --bg: #F2F2F7; --danger: #FF3B30; --safe: #34C759; }
-        body { font-family: -apple-system, sans-serif; margin: 0; background: var(--bg); overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+        :root { --blue: #007AFF; --red: #FF3B30; --green: #34C759; --orange: #FF9500; }
+        body { font-family: -apple-system, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
-        /* HEADER */
-        .header { display: flex; justify-content: space-between; padding: 15px; background: white; border-bottom: 1px solid #ddd; z-index: 100; font-weight: 800; }
-        .stat-pill { background: #eee; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
+        .header { background: white; padding: 12px; border-bottom: 1px solid #ddd; z-index: 1000; }
+        .status-row { display: flex; justify-content: space-between; align-items: center; }
+        .pill { padding: 4px 10px; border-radius: 12px; color: white; font-size: 10px; font-weight: bold; text-transform: uppercase; transition: 0.3s; }
+        .bg-gray { background: #999; }
+        .bg-green { background: var(--green); }
+        .bg-red { background: var(--red); }
+        .bg-orange { background: var(--orange); }
 
-        /* MAP AREA */
-        #map { flex-grow: 1; z-index: 1; }
+        #map { flex: 1; }
 
-        /* FLOATING ACTION BUTTONS (RIGHT SIDE) */
-        .fab-menu { position: absolute; right: 15px; top: 100px; display: flex; flex-direction: column; gap: 12px; z-index: 1000; }
+        .side-menu { position: absolute; right: 15px; top: 100px; display: flex; flex-direction: column; gap: 12px; z-index: 1000; }
+        .btn-circle { width: 50px; height: 50px; border-radius: 50%; border: none; background: white; box-shadow: 0 4px 10px rgba(0,0,0,0.15); font-size: 20px; cursor: pointer; }
         
-        .circle-btn {
-            width: 55px; height: 55px; border-radius: 50%; background: white; border: none;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2); font-size: 22px; cursor: pointer;
-            display: flex; align-items: center; justify-content: center;
-            transition: transform 0.1s, background 0.3s;
-        }
-
-        /* PRESS FEEDBACK */
-        .circle-btn:active { transform: scale(0.85); box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
-        
-        /* ACTIVE ANIMATION (PULSE) */
-        .active-btn { background: var(--primary); color: white; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(0, 122, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); } }
-
-        /* LOGS MODAL */
-        #logs-modal { display: none; position: fixed; bottom: 0; left: 0; width: 100%; height: 50%; background: white; z-index: 2000; border-radius: 20px 20px 0 0; box-shadow: 0 -5px 20px rgba(0,0,0,0.2); overflow-y: auto; padding: 20px; box-sizing: border-box; }
-        .log-entry { font-family: monospace; font-size: 12px; border-bottom: 1px solid #eee; padding: 5px 0; }
-
-        /* MODE SELECTOR (BOTTOM) */
-        .bottom-nav { background: white; padding: 15px; display: flex; justify-content: space-around; border-top: 1px solid #ddd; z-index: 100; }
-        .mode-btn { border: none; padding: 10px 15px; border-radius: 20px; font-weight: 700; font-size: 12px; background: #eee; cursor: pointer; }
-        .active-mode { background: var(--primary); color: white; }
+        .mode-bar { background: white; padding: 15px; display: flex; justify-content: space-around; border-top: 1px solid #ddd; z-index: 1000; }
+        .m-btn { border: none; padding: 10px 15px; border-radius: 15px; font-weight: bold; font-size: 11px; background: #eee; }
+        .m-active { background: var(--blue); color: white; }
     </style>
 </head>
 <body>
 
 <div class="header">
-    <div>🐾 OREO PRO</div>
-    <div style="display:flex; gap:5px;">
-        <span class="stat-pill">🔋 <span id="bat">--%</span></span>
-        <span class="stat-pill">📍 <span id="dist">--</span></span>
+    <div class="status-row">
+        <b>🐾 OREO TRACKER</b>
+        <div>
+            <span id="conn-pill" class="pill bg-red">OFFLINE</span>
+            <span id="gps-pill" class="pill bg-gray">GPS: --</span>
+        </div>
+    </div>
+    <div style="display:flex; justify-content:space-between; font-size:11px; color:#666; margin-top:8px;">
+        <span>🔋 <b id="bat-txt">--%</b></span>
+        <span>🛰️ Sats: <b id="sat-txt">0</b></span>
+        <span>⏱️ <span id="time-ago">---</span></span>
     </div>
 </div>
 
 <div id="map"></div>
 
-<div class="fab-menu">
-    <button class="circle-btn" onclick="centerMap()" title="Center">🎯</button>
-    <button id="fence-btn" class="circle-btn" onclick="toggleFence()" title="Geofence">🛡️</button>
-    <button id="logs-btn" class="circle-btn" onclick="toggleLogs()" title="Logs">📜</button>
-    <button class="circle-btn" onclick="window.location.reload()">🔄</button>
+<div class="side-menu">
+    <button class="btn-circle" onclick="centerMap()">🎯</button>
+    <button class="btn-circle" onclick="window.location.reload()">🔄</button>
 </div>
 
-<div class="bottom-nav">
-    <button id="m-HOME" class="mode-btn" onclick="sendMode('HOME')">HOME</button>
-    <button id="m-WALK" class="mode-btn" onclick="sendMode('WALK')">WALK</button>
-    <button id="m-LOST" class="mode-btn" onclick="sendMode('LOST')">LOST</button>
-    <button id="m-SAVE" class="mode-btn" onclick="sendMode('SAVE')">SAVE</button>
-</div>
-
-<div id="logs-modal">
-    <div style="display:flex; justify-content: space-between;"><b>System Logs</b><button onclick="toggleLogs()">Close</button></div>
-    <hr><div id="log-content"></div>
+<div class="mode-bar">
+    <button id="b-HOME" class="m-btn" onclick="sendMode('HOME')">HOME</button>
+    <button id="b-WALK" class="m-btn" onclick="sendMode('WALK')">WALK</button>
+    <button id="b-LOST" class="m-btn" onclick="sendMode('LOST')">LOST</button>
+    <button id="b-SAVE" class="m-btn" onclick="sendMode('SAVE')">SAVE</button>
 </div>
 
 <script>
     const TOPIC = "Oreo_Safe_Tracker";
-    let trackerPos = [14.5995, 120.9842], userPos = null;
-    let fenceCircle = null, homeMarker = null, routing = null;
-    let isFenceActive = false;
+    let trackerPos = [14.5995, 120.9842], lastMsgTime = 0;
 
-    const map = L.map('map', { zoomControl: false }).setView(trackerPos, 16);
+    let map = L.map('map', {zoomControl: false}).setView(trackerPos, 15);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
-
-    const dogIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/616/616408.png', iconSize: [40, 40], iconAnchor: [20, 40] });
-    let marker = L.marker(trackerPos, { icon: dogIcon }).addTo(map);
-    let userMarker = L.circleMarker([0,0], { radius: 7, color: 'white', fillColor: '#007AFF', fillOpacity: 1, weight: 2 }).addTo(map);
-
-    function addLog(m) { 
-        const content = document.getElementById('log-content');
-        content.innerHTML = `<div class="log-entry">[${new Date().toLocaleTimeString()}] ${m}</div>` + content.innerHTML;
-    }
+    let dogMarker = L.marker(trackerPos, {icon: L.icon({iconUrl:'https://cdn-icons-png.flaticon.com/512/616/616408.png', iconSize:[40,40]})}).addTo(map);
 
     const client = new Paho.MQTT.Client("wss://broker.hivemq.com:8884/mqtt", "web_" + Math.random());
+    
     client.onMessageArrived = (msg) => {
-        if (msg.destinationName.includes("data")) {
-            const data = JSON.parse(msg.payloadString);
-            document.getElementById('bat').innerText = Math.round((parseFloat(data.bat)-3.4)*125) + "%";
+        if(msg.destinationName.includes("data")) {
+            let data = JSON.parse(msg.payloadString);
+            lastMsgTime = Date.now();
             
-            if (data.lat && data.lat != "0.000000") {
+            // UI Updates
+            document.getElementById('bat-txt').innerText = Math.round((parseFloat(data.bat)-3.4)*125) + "%";
+            document.getElementById('sat-txt').innerText = data.sats;
+            
+            // Connection & GPS Pills
+            document.getElementById('conn-pill').innerText = "ONLINE";
+            document.getElementById('conn-pill').className = "pill bg-green";
+            
+            const gp = document.getElementById('gps-pill');
+            gp.innerText = "GPS: " + data.gps;
+            gp.className = data.gps === "FIX" ? "pill bg-green" : "pill bg-orange";
+
+            if(data.lat != "0.0") {
                 trackerPos = [parseFloat(data.lat), parseFloat(data.lng)];
-                marker.setLatLng(trackerPos);
-                
-                if (data.mode === "LOST") updateRoute();
-                checkFence();
+                dogMarker.setLatLng(trackerPos);
             }
-            updateModeUI(data.mode);
+            updateModeButtons(data.mode);
         }
     };
 
-    function updateModeUI(mode) {
-        document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active-mode'));
-        document.getElementById('m-' + mode).classList.add('active-mode');
+    function updateModeButtons(m) {
+        document.querySelectorAll('.m-btn').forEach(b => b.classList.remove('m-active'));
+        const activeBtn = document.getElementById('b-'+m);
+        if(activeBtn) activeBtn.classList.add('m-active');
     }
 
-    function toggleFence() {
-        isFenceActive = !isFenceActive;
-        const btn = document.getElementById('fence-btn');
-        if (isFenceActive) {
-            btn.classList.add('active-btn');
-            homeMarker = L.marker(trackerPos, {draggable: true}).addTo(map);
-            fenceCircle = L.circle(trackerPos, {radius: 50, color: '#34C759'}).addTo(map);
-            homeMarker.on('drag', (e) => fenceCircle.setLatLng(e.target.getLatLng()));
-            addLog("Geofence Enabled");
-        } else {
-            btn.classList.remove('active-btn');
-            if(fenceCircle) map.removeLayer(fenceCircle);
-            if(homeMarker) map.removeLayer(homeMarker);
-            addLog("Geofence Disabled");
+    // Heartbeat Monitoring (Checks every 1 second)
+    setInterval(() => {
+        if(lastMsgTime === 0) return;
+        let diff = Math.floor((Date.now() - lastMsgTime) / 1000);
+        document.getElementById('time-ago').innerText = diff < 60 ? diff + "s ago" : Math.floor(diff/60) + "m ago";
+
+        // If no message for 2 minutes, mark as OFFLINE
+        if(diff > 120) {
+            document.getElementById('conn-pill').innerText = "OFFLINE";
+            document.getElementById('conn-pill').className = "pill bg-red";
         }
-    }
+    }, 1000);
 
-    function checkFence() {
-        if (isFenceActive && fenceCircle) {
-            const d = map.distance(trackerPos, fenceCircle.getLatLng());
-            if (d > fenceCircle.getRadius()) {
-                document.body.style.border = "5px solid red";
-                addLog("!!! GEOFENCE BREACH !!!");
-            } else {
-                document.body.style.border = "none";
-            }
-        }
-    }
-
-    function updateRoute() {
-        if (!userPos) return;
-        const d = map.distance(userPos, trackerPos);
-        document.getElementById('dist').innerText = Math.round(d) + "m";
-        if (routing) map.removeControl(routing);
-        routing = L.Routing.control({
-            waypoints: [L.latLng(userPos), L.latLng(trackerPos)],
-            createMarker: () => null,
-            lineOptions: { styles: [{ color: '#007AFF', weight: 5 }] },
-            addWaypoints: false, show: false
-        }).addTo(map);
-    }
-
-    function sendMode(m) { client.send(new Paho.MQTT.Message(m), TOPIC + "/setMode"); addLog("Mode sent: " + m); }
+    function sendMode(m) { client.send(new Paho.MQTT.Message(m), TOPIC + "/setMode"); }
     function centerMap() { map.flyTo(trackerPos, 18); }
-    function toggleLogs() { 
-        const m = document.getElementById('logs-modal');
-        const btn = document.getElementById('logs-btn');
-        m.style.display = (m.style.display === 'block') ? 'none' : 'block';
-        btn.classList.toggle('active-btn');
-    }
 
-    navigator.geolocation.watchPosition(p => {
-        userPos = [p.coords.latitude, p.coords.longitude];
-        userMarker.setLatLng(userPos);
-    }, null, {enableHighAccuracy: true});
-
-    client.connect({useSSL:true, onSuccess: () => client.subscribe(TOPIC + "/#")});
+    client.connect({useSSL:true, onSuccess:() => client.subscribe(TOPIC + "/data")});
 </script>
 </body>
 </html>
