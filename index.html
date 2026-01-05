@@ -12,7 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     
     <style>
-        :root { --primary-blue: #0066FF; --bg-grey: #F2F2F7; --text-dark: #1C1C1E; }
+        :root { --primary-blue: #0066FF; --bg-grey: #F2F2F7; --text-dark: #1C1C1E; --safe-green: #34c759; --warn-orange: #ff9500; --danger-red: #ff3b30; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; background: var(--bg-grey); display: flex; flex-direction: column; height: 100vh; overflow: hidden; color: var(--text-dark); }
         
         /* HEADER */
@@ -27,11 +27,28 @@
         .info-label { font-size: 11px; color: #8e8e93; text-transform: uppercase; margin-bottom: 4px; display: block; }
         .info-val { font-size: 18px; font-weight: 700; }
         
+        .fence-row { display: flex; justify-content: space-between; align-items: center; background: #f9f9f9; padding: 10px 15px; border-radius: 16px; font-size: 13px; font-weight: 500;}
+        .switch { position: relative; display: inline-block; width: 40px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #e9e9ea; transition: .4s; border-radius: 24px; }
+        .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--safe-green); }
+        input:checked + .slider:before { transform: translateX(16px); }
+
         /* MAP */
         .map-container { flex-grow: 1; position: relative; }
         #map { height: 100%; width: 100%; z-index: 1; }
         .fab-container { position: absolute; bottom: 30px; right: 20px; display: flex; flex-direction: column; gap: 12px; z-index: 1000; }
         .fab-btn { width: 50px; height: 50px; background: white; border-radius: 50%; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: none; font-size: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .tracking-active { background: var(--primary-blue) !important; color: white !important; }
+
+        /* BOTTOM SHEET */
+        .bottom-sheet { background: white; padding: 20px; border-top-left-radius: 24px; border-top-right-radius: 24px; box-shadow: 0 -4px 20px rgba(0,0,0,0.08); z-index: 10; }
+        .mode-controls { display: flex; gap: 10px; margin-top: 10px;}
+        .btn-mode { flex: 1; border: none; padding: 14px; border-radius: 30px; color: white; font-weight: 700; font-size: 13px; background: #C7C7CC; cursor: pointer; }
+        .active-SAFE { background: var(--safe-green) !important; } 
+        .active-WALK { background: var(--warn-orange) !important; } 
+        .active-LOST { background: var(--danger-red) !important; } 
 
         /* LOGS MODAL */
         #logs-modal { display: none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
@@ -53,7 +70,11 @@
     <div class="info-stats">
         <div><span class="info-label">Battery</span><span id="bat-val" class="info-val">--%</span></div>
         <div><span class="info-label">Distance</span><span id="dist-val" class="info-val">-- m</span></div>
-        <div><span class="info-label">Signal (CSQ)</span><span id="gps-status" class="info-val" style="font-size:14px; color:#ff9500;">WAIT</span></div>
+        <div><span class="info-label">Signal</span><span id="gps-status" class="info-val" style="font-size:14px; color:#ff9500;">WAIT</span></div>
+    </div>
+    <div class="fence-row">
+        <span>🛡️ Geofence (Drag Pin)</span>
+        <label class="switch"><input type="checkbox" id="fence-toggle" onchange="toggleFence(this.checked)"><span class="slider"></span></label>
     </div>
 </div>
 
@@ -62,7 +83,17 @@
     <div class="fab-container">
         <button class="fab-btn" onclick="toggleLogs()">📜</button>
         <button class="fab-btn" onclick="toggleMapStyle()">🗺️</button>
+        <button id="track-btn-fab" class="fab-btn" onclick="toggleTracking()">👣</button>
         <button class="fab-btn" onclick="centerMap()">🎯</button>
+    </div>
+</div>
+
+<div class="bottom-sheet">
+    <span style="font-weight:700;">Select Mode</span>
+    <div class="mode-controls">
+        <button id="mode-SAFE" class="btn-mode" onclick="sendMode('SAFE')">🏠 SAFE</button>
+        <button id="mode-WALK" class="btn-mode" onclick="sendMode('WALK')">🦮 WALK</button>
+        <button id="mode-LOST" class="btn-mode" onclick="sendMode('LOST')">🚨 LOST</button>
     </div>
 </div>
 
@@ -76,22 +107,19 @@
 <script>
     const TOPIC_BASE = "Oreo_Safe_Tracker";
     let trackerPos = [14.5995, 120.9842], userPos = null;
+    let isTracking = false, routingControl = null;
+    let fenceCircle = null, homeMarker = null;
     let currentLayerStr = 'light';
+    let currentMode = "SAFE";
 
-    // Battery Voltage to % Logic for 3.7V Lipo
     function getBatteryPercentage(voltage) {
         let v = parseFloat(voltage);
         if (v >= 4.10) return 100;
-        if (v >= 4.00) return 90;
-        if (v >= 3.90) return 80;
         if (v >= 3.80) return 60;
-        if (v >= 3.70) return 40;
         if (v >= 3.60) return 20;
-        if (v <= 3.50) return 5;
-        return 0;
+        return 5;
     }
 
-    // Leaflet Setup
     const mapLayers = {
         light: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'),
         satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')
@@ -106,70 +134,94 @@
     let marker = L.marker(trackerPos, {icon: dogIcon}).addTo(map);
     let userMarker = L.circleMarker([0,0], {radius: 8, color: 'white', fillColor: '#0066FF', fillOpacity: 1, weight: 3}).addTo(map);
 
-    // Logging
     function addLog(msg) {
         const logBox = document.getElementById('log-content');
-        const time = new Date().toLocaleTimeString();
-        logBox.innerHTML = `<div class="log-line"><b>[${time}]</b> ${msg}</div>` + logBox.innerHTML;
+        logBox.innerHTML = `<div class="log-line"><b>[${new Date().toLocaleTimeString()}]</b> ${msg}</div>` + logBox.innerHTML;
     }
     function toggleLogs() { const m = document.getElementById('logs-modal'); m.style.display = (m.style.display === 'block') ? 'none' : 'block'; }
 
-    // MQTT Connection
     const client = new Paho.MQTT.Client("wss://broker.hivemq.com:8884/mqtt", "oreo_web_" + Math.random().toString(16).substr(2, 8));
     
-    client.onConnectionLost = (responseObject) => {
-        addLog("❌ Connection Lost: " + responseObject.errorMessage);
-        document.getElementById('status').innerText = "DISCONNECTED";
-        document.getElementById('dot-sys').style.background = "#ff3b30";
-    };
-
     client.onMessageArrived = (msg) => {
-        // Handle ONLINE/OFFLINE status
         if (msg.destinationName.includes("status")) {
             const s = msg.payloadString;
             document.getElementById('status').innerText = s;
             document.getElementById('dot-sys').style.background = (s === "ONLINE") ? "#34c759" : "#ff3b30";
-            addLog("Device is " + s);
-        } 
-        // Handle Location Data
-        else if (msg.destinationName.includes("data")) {
-            try {
-                const data = JSON.parse(msg.payloadString);
-                
-                // Update Battery
-                document.getElementById('bat-val').innerText = getBatteryPercentage(data.bat) + "%";
-                
-                // Update Signal Quality (CSQ 0-31)
-                document.getElementById('gps-status').innerText = data.sig + " CSQ";
+        } else if (msg.destinationName.includes("data")) {
+            const data = JSON.parse(msg.payloadString);
+            document.getElementById('bat-val').innerText = getBatteryPercentage(data.bat) + "%";
+            document.getElementById('gps-status').innerText = data.sig + " CSQ";
 
-                // Update Position (Matching hardware keys 'lat' and 'lng')
-                if (data.lat != "0.000000" && data.lng != "0.000000") {
-                    trackerPos = [parseFloat(data.lat), parseFloat(data.lng)];
-                    marker.setLatLng(trackerPos);
-                    
-                    // Update Distance from user phone
-                    if (userPos) {
-                        let d = Math.round(map.distance(userPos, trackerPos));
-                        document.getElementById('dist-val').innerText = d + " m";
+            if (data.lat && data.lng && data.lat != "0.000000") {
+                trackerPos = [parseFloat(data.lat), parseFloat(data.lng)];
+                marker.setLatLng(trackerPos);
+                if (isTracking) updateRoute();
+                if (userPos) document.getElementById('dist-val').innerText = Math.round(map.distance(userPos, trackerPos)) + " m";
+                
+                // Fence Check
+                if(fenceCircle) {
+                    const distFromHome = map.distance(trackerPos, fenceCircle.getLatLng());
+                    if(distFromHome > fenceCircle.getRadius()) {
+                        document.getElementById('status').innerText = "BREACH!";
+                        document.getElementById('dot-sys').style.background = "red";
                     }
                 }
-            } catch(e) { addLog("JSON Error: " + e); }
+            }
         }
     };
 
     function connectMQTT() {
-        addLog("Connecting to Broker...");
-        client.connect({
-            useSSL: true, 
-            onSuccess: () => {
-                client.subscribe(TOPIC_BASE + "/#");
-                addLog("✅ Connected to MQTT");
-            },
-            onFailure: (e) => addLog("Connect Fail: " + e.errorMessage)
-        });
+        client.connect({useSSL:true, onSuccess: () => {
+            client.subscribe(TOPIC_BASE + "/#");
+            addLog("✅ Connected to MQTT");
+        }});
     }
 
-    // Map Controls
+    function sendMode(mode) {
+        currentMode = mode;
+        document.querySelectorAll('.btn-mode').forEach(b => b.classList.remove('active-SAFE', 'active-WALK', 'active-LOST'));
+        document.getElementById('mode-' + mode).classList.add('active-' + mode);
+        
+        if (client.isConnected()) {
+            const message = new Paho.MQTT.Message(mode);
+            message.destinationName = TOPIC_BASE + "/setMode";
+            client.send(message);
+            addLog("🚀 Mode Set: " + mode);
+        }
+    }
+
+    function toggleFence(active) {
+        if (active) {
+            homeMarker = L.marker(trackerPos, {draggable: true}).addTo(map);
+            fenceCircle = L.circle(trackerPos, {radius: 50, color: '#0066FF', fillOpacity: 0.1}).addTo(map);
+            homeMarker.on('drag', (e) => fenceCircle.setLatLng(e.target.getLatLng()));
+            addLog("🛡️ Fence Active (50m)");
+        } else {
+            if(fenceCircle) map.removeLayer(fenceCircle);
+            if(homeMarker) map.removeLayer(homeMarker);
+            fenceCircle = null;
+            addLog("🛡️ Fence Off");
+        }
+    }
+
+    function toggleTracking() {
+        isTracking = !isTracking;
+        document.getElementById('track-btn-fab').classList.toggle('tracking-active');
+        if (!isTracking && routingControl) map.removeControl(routingControl);
+        if (isTracking) updateRoute();
+    }
+
+    function updateRoute() {
+        if (!isTracking || !userPos) return;
+        if (routingControl) map.removeControl(routingControl);
+        routingControl = L.Routing.control({
+            waypoints: [L.latLng(userPos[0], userPos[1]), L.latLng(trackerPos[0], trackerPos[1])],
+            createMarker: () => null, 
+            lineOptions: { styles: [{ color: '#0066FF', weight: 6, opacity: 0.6 }] },
+            show: false, addWaypoints: false
+        }).addTo(map);
+    }
+
     function centerMap() { map.flyTo(trackerPos, 18); }
     function toggleMapStyle() {
         map.removeLayer(mapLayers[currentLayerStr]);
@@ -177,15 +229,11 @@
         mapLayers[currentLayerStr].addTo(map);
     }
 
-    // Start
     connectMQTT();
-
-    // Track User Phone Location
     navigator.geolocation.watchPosition(p => {
         userPos = [p.coords.latitude, p.coords.longitude];
         userMarker.setLatLng(userPos);
     }, null, {enableHighAccuracy: true});
-
 </script>
 </body>
 </html>
