@@ -9,23 +9,24 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <style>
         :root { --blue: #007AFF; --red: #FF3B30; --green: #34C759; --orange: #FF9500; }
-        body { font-family: -apple-system, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        body { font-family: -apple-system, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: #f8f8f8; }
         
-        .header { background: white; padding: 12px; border-bottom: 1px solid #ddd; z-index: 1000; }
+        .header { background: white; padding: 12px; border-bottom: 1px solid #ddd; z-index: 1000; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
         .status-row { display: flex; justify-content: space-between; align-items: center; }
-        .pill { padding: 4px 10px; border-radius: 12px; color: white; font-size: 10px; font-weight: bold; text-transform: uppercase; transition: 0.3s; }
-        .bg-gray { background: #999; }
+        .pill { padding: 4px 10px; border-radius: 12px; color: white; font-size: 10px; font-weight: bold; text-transform: uppercase; }
         .bg-green { background: var(--green); }
         .bg-red { background: var(--red); }
         .bg-orange { background: var(--orange); }
+        .bg-gray { background: #999; }
 
         #map { flex: 1; }
 
-        .side-menu { position: absolute; right: 15px; top: 100px; display: flex; flex-direction: column; gap: 12px; z-index: 1000; }
-        .btn-circle { width: 50px; height: 50px; border-radius: 50%; border: none; background: white; box-shadow: 0 4px 10px rgba(0,0,0,0.15); font-size: 20px; cursor: pointer; }
-        
+        .side-menu { position: absolute; right: 15px; top: 120px; display: flex; flex-direction: column; gap: 12px; z-index: 1000; }
+        .btn-circle { width: 50px; height: 50px; border-radius: 50%; border: none; background: white; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 20px; cursor: pointer; transition: 0.1s; display: flex; align-items: center; justify-content: center; }
+        .btn-circle:active { transform: scale(0.85); }
+
         .mode-bar { background: white; padding: 15px; display: flex; justify-content: space-around; border-top: 1px solid #ddd; z-index: 1000; }
-        .m-btn { border: none; padding: 10px 15px; border-radius: 15px; font-weight: bold; font-size: 11px; background: #eee; }
+        .m-btn { border: none; padding: 10px 18px; border-radius: 20px; font-weight: bold; font-size: 11px; background: #eee; cursor: pointer; }
         .m-active { background: var(--blue); color: white; }
     </style>
 </head>
@@ -39,10 +40,13 @@
             <span id="gps-pill" class="pill bg-gray">GPS: --</span>
         </div>
     </div>
-    <div style="display:flex; justify-content:space-between; font-size:11px; color:#666; margin-top:8px;">
+    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; font-size: 11px; color:#666; margin-top:10px; text-align:center;">
         <span>🔋 <b id="bat-txt">--%</b></span>
+        <span>📶 Sig: <b id="sig-txt">--</b></span>
         <span>🛰️ Sats: <b id="sat-txt">0</b></span>
-        <span>⏱️ <span id="time-ago">---</span></span>
+    </div>
+    <div style="text-align: center; font-size: 10px; color: #999; margin-top: 5px;">
+        Last update: <span id="time-ago">---</span>
     </div>
 </div>
 
@@ -75,11 +79,12 @@
             let data = JSON.parse(msg.payloadString);
             lastMsgTime = Date.now();
             
-            // UI Updates
+            // Stats
             document.getElementById('bat-txt').innerText = Math.round((parseFloat(data.bat)-3.4)*125) + "%";
+            document.getElementById('sig-txt').innerText = data.csq + " CSQ";
             document.getElementById('sat-txt').innerText = data.sats;
             
-            // Connection & GPS Pills
+            // Status Pills
             document.getElementById('conn-pill').innerText = "ONLINE";
             document.getElementById('conn-pill').className = "pill bg-green";
             
@@ -101,14 +106,12 @@
         if(activeBtn) activeBtn.classList.add('m-active');
     }
 
-    // Heartbeat Monitoring (Checks every 1 second)
     setInterval(() => {
         if(lastMsgTime === 0) return;
         let diff = Math.floor((Date.now() - lastMsgTime) / 1000);
         document.getElementById('time-ago').innerText = diff < 60 ? diff + "s ago" : Math.floor(diff/60) + "m ago";
 
-        // If no message for 2 minutes, mark as OFFLINE
-        if(diff > 120) {
+        if(diff > 120) { // Offline if silent for 2 mins
             document.getElementById('conn-pill').innerText = "OFFLINE";
             document.getElementById('conn-pill').className = "pill bg-red";
         }
