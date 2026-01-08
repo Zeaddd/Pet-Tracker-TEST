@@ -1,246 +1,297 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>Oreo Safe Tracker</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Oreo Elite Dashboard</title>
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css">
 
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
-<script src="https://unpkg.com/paho-mqtt/mqttws31.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
 
 <style>
-    body { margin:0; font-family: Arial; background:#111; color:white; }
-    #map { height: 70vh; }
+:root { --blue:#007AFF; --red:#FF3B30; --green:#34C759; --orange:#FF9500; }
 
-    .pill { padding:6px 12px; border-radius:20px; font-size:12px; }
-    .bg-green { background:#34C759; }
-    .bg-red { background:#FF3B30; }
-    .bg-orange { background:#FF9500; }
+body {
+    font-family:-apple-system, sans-serif;
+    margin:0; height:100vh; overflow:hidden;
+    display:flex; flex-direction:column;
+    background:#f0f0f0;
+}
 
-    .controls { padding:10px; }
-    .m-btn {
-        padding:10px 15px;
-        margin:5px;
-        background:#222;
-        color:white;
-        border:none;
-        border-radius:8px;
-        cursor:pointer;
-    }
-    .m-active {
-        background:#007AFF;
-        box-shadow:0 0 10px #007AFF;
-    }
+.header {
+    background:white;
+    padding:10px 15px;
+    border-bottom:1px solid #ddd;
+    z-index:1000;
+    box-shadow:0 2px 10px rgba(0,0,0,.1);
+}
 
-    .active-glow {
-        box-shadow:0 0 12px #34C759;
-    }
+.top-line {
+    display:flex; justify-content:space-between; align-items:center;
+}
 
-    #log-panel {
-        display:none;
-        background:#000;
-        padding:10px;
-        max-height:200px;
-        overflow:auto;
-    }
+.pill-box { display:flex; gap:5px; }
+
+.pill {
+    padding:3px 8px;
+    border-radius:10px;
+    color:white;
+    font-size:10px;
+    font-weight:bold;
+}
+
+.bg-green { background:var(--green); }
+.bg-red { background:var(--red); }
+.bg-orange { background:var(--orange); }
+.bg-gray { background:#999; }
+
+.stats-grid {
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    font-size:11px;
+    margin-top:8px;
+    color:#666;
+    text-align:center;
+}
+
+.dist-banner {
+    background:#f0f7ff;
+    text-align:center;
+    font-size:12px;
+    padding:6px;
+    border-radius:8px;
+    margin-top:8px;
+    color:var(--blue);
+    font-weight:bold;
+    border:1px solid #d0e3ff;
+}
+
+#map { flex:1; }
+
+.side-menu {
+    position:absolute;
+    right:15px;
+    top:150px;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+    z-index:1000;
+}
+
+.btn-circle {
+    width:52px; height:52px;
+    border-radius:50%;
+    border:none;
+    background:white;
+    box-shadow:0 4px 15px rgba(0,0,0,.2);
+    font-size:22px;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+}
+
+.btn-circle:active { transform:scale(.85); }
+
+.active-glow {
+    background:var(--blue);
+    color:white;
+    animation:pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { box-shadow:0 0 0 0 rgba(0,122,255,.7); }
+    70% { box-shadow:0 0 0 12px rgba(0,122,255,0); }
+    100% { box-shadow:0 0 0 0 rgba(0,122,255,0); }
+}
+
+#log-panel {
+    display:none;
+    position:fixed;
+    bottom:85px;
+    left:15px;
+    right:15px;
+    height:150px;
+    background:rgba(255,255,255,.98);
+    border-radius:15px;
+    z-index:2000;
+    padding:12px;
+    box-shadow:0 -5px 20px rgba(0,0,0,.15);
+    overflow-y:auto;
+    font-family:monospace;
+    font-size:11px;
+    border:1px solid #ddd;
+}
+
+.mode-bar {
+    background:white;
+    padding:15px;
+    display:flex;
+    justify-content:space-around;
+    border-top:1px solid #ddd;
+}
+
+.m-btn {
+    border:none;
+    padding:10px 15px;
+    border-radius:15px;
+    font-weight:bold;
+    font-size:11px;
+    background:#eee;
+    color:#444;
+    cursor:pointer;
+}
+
+.m-active {
+    background:var(--blue);
+    color:white;
+    box-shadow:0 4px 10px rgba(0,122,255,.3);
+}
 </style>
 </head>
 
 <body>
 
-<div id="map"></div>
-
-<div class="controls">
-    <span id="conn-pill" class="pill bg-red">OFFLINE</span>
-    <span id="gps-pill" class="pill bg-orange">GPS: NO FIX</span>
-    <span>Battery: <span id="bat-txt">--</span></span>
-    <span>Signal: <span id="sig-txt">--</span></span>
-    <span>Sats: <span id="sat-txt">--</span></span>
-    <span id="time-ago"></span>
-
-    <div id="dist-display"></div>
-
-    <div>
-        <button id="b-NORMAL" class="m-btn" onclick="sendMode('NORMAL')">Normal</button>
-        <button id="b-LOST"   class="m-btn" onclick="sendMode('LOST')">Lost</button>
-        <button id="b-SLEEP"  class="m-btn" onclick="sendMode('SLEEP')">Sleep</button>
+<div class="header">
+    <div class="top-line">
+        <b>🐶 OREO PRO</b>
+        <div class="pill-box">
+            <span id="conn-pill" class="pill bg-red">OFFLINE</span>
+            <span id="gps-pill" class="pill bg-gray">GPS: SEARCH</span>
+        </div>
     </div>
 
-    <div>
-        <button id="f-btn" class="m-btn" onclick="toggleFence()">Geofence</button>
-        <button id="l-btn" class="m-btn" onclick="toggleLogs()">Logs</button>
-        <button class="m-btn" onclick="centerMap()">Center</button>
+    <div class="stats-grid">
+        <span>🔋 <b id="bat-txt">--%</b></span>
+        <span>📶 <b id="sig-txt">-- CSQ</b></span>
+        <span>🛰️ <b id="sat-txt">0</b> Sats</span>
     </div>
 
-    <div id="log-panel">
-        <div id="log-content"></div>
+    <div id="dist-display" class="dist-banner">📍 Distance: Calculating...</div>
+    <div style="text-align:center;font-size:10px;color:#999;margin-top:4px;">
+        Last Signal: <span id="time-ago">Never</span>
     </div>
 </div>
 
-<script>
-const BASE_TOPIC = "Oreo_Safe_Tracker";
-const DATA_TOPIC = BASE_TOPIC + "/data";
-const CMD_TOPIC  = BASE_TOPIC + "/setMode";
+<div id="map"></div>
 
-let trackerPos = [14.5995, 120.9842];
-let userPos = null;
-let lastMsgTime = 0;
-let routing = null;
-let fence = null;
+<div class="side-menu">
+    <button class="btn-circle" onclick="centerMap()">🎯</button>
+    <button id="f-btn" class="btn-circle" onclick="toggleFence()">🛡️</button>
+    <button id="l-btn" class="btn-circle" onclick="toggleLogs()">📜</button>
+    <button class="btn-circle" onclick="location.reload()">🔄</button>
+</div>
+
+<div id="log-panel"><b>System Events</b><hr><div id="log-content"></div></div>
+
+<div class="mode-bar">
+    <button id="b-HOME" class="m-btn" onclick="sendMode('HOME')">HOME</button>
+    <button id="b-WALK" class="m-btn" onclick="sendMode('WALK')">WALK</button>
+    <button id="b-LOST" class="m-btn" onclick="sendMode('LOST')">LOST</button>
+    <button id="b-SAVE" class="m-btn" onclick="sendMode('SAVE')">SAVE</button>
+</div>
+
+<script>
+const TOPIC = "Oreo_Safe_Tracker";
+
+let trackerPos=[14.5995,120.9842], userPos=null;
+let lastMsgTime=0, routing=null, fence=null;
 
 /* MAP */
-let map = L.map('map', { zoomControl:false }).setView(trackerPos, 16);
+const map = L.map('map',{zoomControl:false}).setView(trackerPos,16);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
 
-let dogIcon = L.icon({
-    iconUrl:'https://cdn-icons-png.flaticon.com/512/616/616408.png',
-    iconSize:[45,45],
-    iconAnchor:[22,22]
-});
+const dogMarker = L.marker(trackerPos,{
+    icon:L.icon({
+        iconUrl:'https://cdn-icons-png.flaticon.com/512/616/616408.png',
+        iconSize:[45,45]
+    })
+}).addTo(map);
 
-let dogMarker = L.marker(trackerPos,{icon:dogIcon}).addTo(map);
-let userMarker = L.circleMarker([0,0],{
-    radius:7, color:'white', fillColor:'#007AFF', fillOpacity:1, weight:2
+const userMarker = L.circleMarker([0,0],{
+    radius:7,color:'white',fillColor:'#007AFF',fillOpacity:1,weight:2
 }).addTo(map);
 
 /* MQTT */
 const client = new Paho.MQTT.Client(
     "wss://broker.hivemq.com:8884/mqtt",
-    "web_" + Math.random()
+    "web_"+Math.random()
 );
 
 client.onMessageArrived = msg => {
-    console.log("RX:", msg.destinationName, msg.payloadString);
+    if(!msg.destinationName.includes("data")) return;
 
-    if(msg.destinationName !== DATA_TOPIC) return;
-
-    let data = JSON.parse(msg.payloadString);
+    const data = JSON.parse(msg.payloadString);
     lastMsgTime = Date.now();
 
-    let batV = parseFloat(data.bat);
-    let batPct = Math.max(0, Math.min(100, Math.round((batV - 3.4) * 125)));
-    document.getElementById('bat-txt').innerText = batPct + "%";
+    let batPct = Math.round((parseFloat(data.bat)-3.4)*125);
+    batPct = Math.max(0,Math.min(100,batPct));
+    document.getElementById('bat-txt').innerText = batPct+"%";
 
-    let csq = parseInt(data.csq);
-    let signalText = csq > 25 ? "Strong" : csq > 15 ? "Good" : "Weak";
-    document.getElementById('sig-txt').innerText = csq + " (" + signalText + ")";
-
+    document.getElementById('sig-txt').innerText = data.csq+" CSQ";
     document.getElementById('sat-txt').innerText = data.sats;
 
-    document.getElementById('conn-pill').innerText = "ONLINE";
-    document.getElementById('conn-pill').className = "pill bg-green";
+    document.getElementById('conn-pill').innerText="ONLINE";
+    document.getElementById('conn-pill').className="pill bg-green";
 
-    const gpsPill = document.getElementById('gps-pill');
-    gpsPill.innerText = "GPS: " + data.gps;
-    gpsPill.className = "pill " + (data.gps === "FIX" ? "bg-green" : "bg-orange");
+    const gp=document.getElementById('gps-pill');
+    gp.innerText="GPS: "+data.gps;
+    gp.className="pill "+(data.gps==="FIX"?"bg-green":"bg-orange");
 
-    if(data.lat !== "0.0") {
-        trackerPos = [parseFloat(data.lat), parseFloat(data.lng)];
+    if(data.lat!=="0.0") {
+        trackerPos=[+data.lat,+data.lng];
         dogMarker.setLatLng(trackerPos);
         calculateDistance();
-        if(data.mode === "LOST") showRoute();
         checkGeofence();
     }
 
-    if(data.mode) updateModeButtons(data.mode);
+    if(data.mode) {
+        data.mode = data.mode.toUpperCase();
+        updateModeButtons(data.mode);
+
+        if(data.mode==="LOST") showRoute();
+        else if(routing) { map.removeControl(routing); routing=null; }
+    }
 };
 
-client.connect({
-    useSSL:true,
-    onSuccess:() => {
-        client.subscribe(BASE_TOPIC + "/#");
-        addLog("Connected to MQTT Broker");
-    },
-    onFailure:e => addLog("MQTT Error: " + e.errorMessage)
-});
-
 /* FUNCTIONS */
-function sendMode(mode) {
-    if(!client.isConnected()) {
-        addLog("MQTT not connected");
+function sendMode(m){
+    if(!client.isConnected()){
+        addLog("❌ MQTT not connected");
         return;
     }
+    m=m.toUpperCase();
+    updateModeButtons(m);
 
-    mode = mode.toUpperCase();
-    updateModeButtons(mode);
-
-    let msg = new Paho.MQTT.Message(mode);
-    msg.destinationName = CMD_TOPIC;
-    msg.qos = 1;
+    const msg=new Paho.MQTT.Message(m);
+    msg.destinationName=TOPIC+"/setMode";
+    msg.qos=1;
     client.send(msg);
-
-    addLog("Sent Mode: " + mode);
+    addLog("Mode request: "+m);
 }
 
-function updateModeButtons(mode) {
-    document.querySelectorAll('.m-btn').forEach(b => b.classList.remove('m-active'));
-    const btn = document.getElementById("b-" + mode.toUpperCase());
+function updateModeButtons(m){
+    if(!m) return;
+    document.querySelectorAll('.m-btn').forEach(b=>b.classList.remove('m-active'));
+    const btn=document.getElementById("b-"+m);
     if(btn) btn.classList.add('m-active');
 }
 
-function calculateDistance() {
+function calculateDistance(){
     if(!userPos) return;
-    let d = map.distance(userPos, trackerPos);
+    const d=map.distance(userPos,trackerPos);
     document.getElementById('dist-display').innerText =
-        "Distance: " + (d > 1000 ? (d/1000).toFixed(2)+" km" : Math.round(d)+" m");
+        "📍 Distance: "+(d>1000?(d/1000).toFixed(2)+" km":Math.round(d)+" m");
 }
 
-function toggleFence() {
-    if(fence) {
-        map.removeLayer(fence);
-        fence = null;
+function toggleFence(){
+    if(fence){
+        map.removeLayer(fence); fence=null;
         document.getElementById('f-btn').classList.remove('active-glow');
-        addLog("Geofence Off");
+        addLog("Geofence OFF");
     } else {
-        fence = L.circle(trackerPos,{radius:60,color:'#34C759',fillOpacity:0.1}).addTo(map);
-        document.getElementById('f-btn').classList.add('active-glow');
-        addLog("Geofence On");
-    }
-}
-
-function checkGeofence() {
-    if(!fence) return;
-    let d = map.distance(trackerPos, fence.getLatLng());
-    document.body.style.border = d > 60 ? "5px solid #FF3B30" : "none";
-}
-
-function showRoute() {
-    if(!userPos) return;
-    if(routing) map.removeControl(routing);
-    routing = L.Routing.control({
-        waypoints:[L.latLng(userPos), L.latLng(trackerPos)],
-        createMarker:() => null,
-        addWaypoints:false,
-        show:false
-    }).addTo(map);
-}
-
-function centerMap() {
-    map.flyTo(trackerPos, 18);
-}
-
-function toggleLogs() {
-    let p = document.getElementById('log-panel');
-    p.style.display = p.style.display === 'block' ? 'none' : 'block';
-    document.getElementById('l-btn').classList.toggle('active-glow');
-}
-
-function addLog(t) {
-    document.getElementById('log-content').innerHTML =
-        `[${new Date().toLocaleTimeString()}] ${t}<br>` +
-        document.getElementById('log-content').innerHTML;
-}
-
-/* GEOLOCATION */
-navigator.geolocation.watchPosition(p => {
-    userPos = [p.coords.latitude, p.coords.longitude];
-    userMarker.setLatLng(userPos);
-    calculateDistance();
-});
-</script>
-
-</body>
-</html>
+        fence=L.circle(trackerPos,{radius:
