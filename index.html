@@ -1,166 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Oreo Safe Tracker</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css">
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
+<script src="https://unpkg.com/paho-mqtt/mqttws31.min.js"></script>
+
+<style>
+    body { margin:0; font-family: Arial; background:#111; color:white; }
+    #map { height: 70vh; }
+
+    .pill { padding:6px 12px; border-radius:20px; font-size:12px; }
+    .bg-green { background:#34C759; }
+    .bg-red { background:#FF3B30; }
+    .bg-orange { background:#FF9500; }
+
+    .controls { padding:10px; }
+    .m-btn {
+        padding:10px 15px;
+        margin:5px;
+        background:#222;
+        color:white;
+        border:none;
+        border-radius:8px;
+        cursor:pointer;
+    }
+    .m-active {
+        background:#007AFF;
+        box-shadow:0 0 10px #007AFF;
+    }
+
+    .active-glow {
+        box-shadow:0 0 12px #34C759;
+    }
+
+    #log-panel {
+        display:none;
+        background:#000;
+        padding:10px;
+        max-height:200px;
+        overflow:auto;
+    }
+</style>
+</head>
+
+<body>
+
+<div id="map"></div>
+
+<div class="controls">
+    <span id="conn-pill" class="pill bg-red">OFFLINE</span>
+    <span id="gps-pill" class="pill bg-orange">GPS: NO FIX</span>
+    <span>Battery: <span id="bat-txt">--</span></span>
+    <span>Signal: <span id="sig-txt">--</span></span>
+    <span>Sats: <span id="sat-txt">--</span></span>
+    <span id="time-ago"></span>
+
+    <div id="dist-display"></div>
+
+    <div>
+        <button id="b-NORMAL" class="m-btn" onclick="sendMode('NORMAL')">Normal</button>
+        <button id="b-LOST"   class="m-btn" onclick="sendMode('LOST')">Lost</button>
+        <button id="b-SLEEP"  class="m-btn" onclick="sendMode('SLEEP')">Sleep</button>
+    </div>
+
+    <div>
+        <button id="f-btn" class="m-btn" onclick="toggleFence()">Geofence</button>
+        <button id="l-btn" class="m-btn" onclick="toggleLogs()">Logs</button>
+        <button class="m-btn" onclick="centerMap()">Center</button>
+    </div>
+
+    <div id="log-panel">
+        <div id="log-content"></div>
+    </div>
+</div>
+
 <script>
-    const BASE_TOPIC = "Oreo_Safe_Tracker";
-    const DATA_TOPIC = "Oreo_Safe_Tracker/data";
-    const CMD_TOPIC = "Oreo_Safe_Tracker/setMode";
+const BASE_TOPIC = "Oreo_Safe_Tracker";
+const DATA_TOPIC = BASE_TOPIC + "/data";
+const CMD_TOPIC  = BASE_TOPIC + "/setMode";
 
-    let trackerPos = [14.5995, 120.9842], userPos = null;
-    let lastMsgTime = 0, routing = null, fence = null;
+let trackerPos = [14.5995, 120.9842];
+let userPos = null;
+let lastMsgTime = 0;
+let routing = null;
+let fence = null;
 
-    // Initialize Map
-    let map = L.map('map', { zoomControl: false }).setView(trackerPos, 16);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
+/* MAP */
+let map = L.map('map', { zoomControl:false }).setView(trackerPos, 16);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
 
-    // Markers
-    let dogIcon = L.icon({ 
-        iconUrl: 'https://cdn-icons-png.flaticon.com/512/616/616408.png', 
-        iconSize: [45, 45],
-        iconAnchor: [22, 22] 
-    });
-    let dogMarker = L.marker(trackerPos, { icon: dogIcon }).addTo(map);
-    let userMarker = L.circleMarker([0,0], { radius: 7, color: 'white', fillColor: '#007AFF', fillOpacity: 1, weight: 2 }).addTo(map);
+let dogIcon = L.icon({
+    iconUrl:'https://cdn-icons-png.flaticon.com/512/616/616408.png',
+    iconSize:[45,45],
+    iconAnchor:[22,22]
+});
 
-    // MQTT Client
-    const client = new Paho.MQTT.Client("wss://broker.hivemq.com:8884/mqtt", "web_" + Math.random());
-    
-    client.onMessageArrived = (msg) => {
-        // Log all incoming traffic to see if hardware is talking
-        console.log("Arrived: " + msg.destinationName + " | " + msg.payloadString);
+let dogMarker = L.marker(trackerPos,{icon:dogIcon}).addTo(map);
+let userMarker = L.circleMarker([0,0],{
+    radius:7, color:'white', fillColor:'#007AFF', fillOpacity:1, weight:2
+}).addTo(map);
 
-        if(msg.destinationName === DATA_TOPIC) {
-            let data = JSON.parse(msg.payloadString);
-            lastMsgTime = Date.now();
-            
-            // Update UI Stats
-            // Conversion: 3.4V (0%) to 4.2V (100%)
-            let batV = parseFloat(data.bat);
-            let batPct = Math.max(0, Math.min(100, Math.round((batV - 3.4) * 125)));
-            document.getElementById('bat-txt').innerText = batPct + "%";
-            
-            // CSQ to Signal Text
-            let csq = parseInt(data.csq);
-            let signalText = "Weak";
-            if(csq > 15) signalText = "Good";
-            if(csq > 25) signalText = "Strong";
-            document.getElementById('sig-txt').innerText = csq + " (" + signalText + ")";
-            
-            document.getElementById('sat-txt').innerText = data.sats;
-            
-            // Update Connection Pill
-            document.getElementById('conn-pill').innerText = "ONLINE";
-            document.getElementById('conn-pill').className = "pill bg-green";
-            
-            // Update GPS Pill
-            const gp = document.getElementById('gps-pill');
-            gp.innerText = "GPS: " + data.gps;
-            gp.className = data.gps === "FIX" ? "pill bg-green" : "pill bg-orange";
+/* MQTT */
+const client = new Paho.MQTT.Client(
+    "wss://broker.hivemq.com:8884/mqtt",
+    "web_" + Math.random()
+);
 
-            // Update Map Position
-            if(data.lat !== "0.0") {
-                trackerPos = [parseFloat(data.lat), parseFloat(data.lng)];
-                dogMarker.setLatLng(trackerPos);
-                calculateDistance();
-                
-                if(data.mode === "LOST") showRoute();
-                checkGeofence();
-            }
-            updateModeButtons(data.mode);
-        }
-    };
+client.onMessageArrived = msg => {
+    console.log("RX:", msg.destinationName, msg.payloadString);
 
-    function calculateDistance() {
-        if(!userPos) return;
-        let d = map.distance(userPos, trackerPos);
-        let text = d > 1000 ? (d/1000).toFixed(2) + " km" : Math.round(d) + " m";
-        document.getElementById('dist-display').innerText = "📍 Distance to Oreo: " + text;
-    }
+    if(msg.destinationName !== DATA_TOPIC) return;
 
-    function toggleFence() {
-        if(fence) {
-            map.removeLayer(fence);
-            fence = null;
-            document.getElementById('f-btn').classList.remove('active-glow');
-            addLog("Geofence Deactivated");
-        } else {
-            fence = L.circle(trackerPos, { radius: 60, color: '#34C759', weight: 2, fillOpacity: 0.1 }).addTo(map);
-            document.getElementById('f-btn').classList.add('active-glow');
-            addLog("Geofence Set (60m)");
-        }
-    }
+    let data = JSON.parse(msg.payloadString);
+    lastMsgTime = Date.now();
 
-    function checkGeofence() {
-        if(fence) {
-            let dist = map.distance(trackerPos, fence.getLatLng());
-            if(dist > 60) {
-                document.body.style.border = "5px solid #FF3B30";
-                addLog("⚠️ ALERT: OREO LEFT SAFE ZONE!");
-            } else {
-                document.body.style.border = "none";
-            }
-        }
-    }
+    let batV = parseFloat(data.bat);
+    let batPct = Math.max(0, Math.min(100, Math.round((batV - 3.4) * 125)));
+    document.getElementById('bat-txt').innerText = batPct + "%";
 
-    function showRoute() {
-        if(!userPos) return;
-        if(routing) map.removeControl(routing);
-        routing = L.Routing.control({
-            waypoints: [L.latLng(userPos), L.latLng(trackerPos)],
-            createMarker: () => null,
-            lineOptions: { styles: [{ color: '#007AFF', weight: 6, opacity: 0.8 }] },
-            addWaypoints: false, show: false
-        }).addTo(map);
-    }
+    let csq = parseInt(data.csq);
+    let signalText = csq > 25 ? "Strong" : csq > 15 ? "Good" : "Weak";
+    document.getElementById('sig-txt').innerText = csq + " (" + signalText + ")";
 
-    function centerMap() { map.flyTo(trackerPos, 18); }
-    
-    function toggleLogs() {
-        const pan = document.getElementById('log-panel');
-        pan.style.display = (pan.style.display === 'block') ? 'none' : 'block';
-        document.getElementById('l-btn').classList.toggle('active-glow');
-    }
+    document.getElementById('sat-txt').innerText = data.sats;
 
-    function addLog(t) {
-        const logContent = document.getElementById('log-content');
-        logContent.innerHTML = `<div>[${new Date().toLocaleTimeString()}] ${t}</div>` + logContent.innerHTML;
-    }
+    document.getElementById('conn-pill').innerText = "ONLINE";
+    document.getElementById('conn-pill').className = "pill bg-green";
 
-    function sendMode(m) {
-        let message = new Paho.MQTT.Message(m);
-        message.destinationName = CMD_TOPIC;
-        client.send(message);
-        addLog("Sent Command: " + m);
-    }
+    const gpsPill = document.getElementById('gps-pill');
+    gpsPill.innerText = "GPS: " + data.gps;
+    gpsPill.className = "pill " + (data.gps === "FIX" ? "bg-green" : "bg-orange");
 
-    function updateModeButtons(m) {
-        document.querySelectorAll('.m-btn').forEach(b => b.classList.remove('m-active'));
-        const btn = document.getElementById('b-'+m);
-        if(btn) btn.classList.add('m-active');
-    }
-
-    setInterval(() => {
-        if(lastMsgTime === 0) return;
-        let diff = Math.floor((Date.now() - lastMsgTime) / 1000);
-        document.getElementById('time-ago').innerText = diff < 60 ? diff + "s ago" : Math.floor(diff/60) + "m ago";
-        
-        if(diff > 150) { // 2.5 minutes
-            document.getElementById('conn-pill').innerText = "OFFLINE";
-            document.getElementById('conn-pill').className = "pill bg-red";
-        }
-    }, 1000);
-
-    navigator.geolocation.watchPosition(p => {
-        userPos = [p.coords.latitude, p.coords.longitude];
-        userMarker.setLatLng(userPos);
+    if(data.lat !== "0.0") {
+        trackerPos = [parseFloat(data.lat), parseFloat(data.lng)];
+        dogMarker.setLatLng(trackerPos);
         calculateDistance();
-    }, (err) => console.log(err), { enableHighAccuracy: true });
+        if(data.mode === "LOST") showRoute();
+        checkGeofence();
+    }
 
-    client.connect({ 
-        useSSL: true, 
-        onSuccess: () => {
-            client.subscribe(BASE_TOPIC + "/#");
-            addLog("Dashboard Connected to Broker");
-        },
-        onFailure: (err) => {
-            addLog("Connection Failed: " + err.errorMessage);
-        }
-    });
+    if(data.mode) updateModeButtons(data.mode);
+};
+
+client.connect({
+    useSSL:true,
+    onSuccess:() => {
+        client.subscribe(BASE_TOPIC + "/#");
+        addLog("Connected to MQTT Broker");
+    },
+    onFailure:e => addLog("MQTT Error: " + e.errorMessage)
+});
+
+/* FUNCTIONS */
+function sendMode(mode) {
+    if(!client.isConnected()) {
+        addLog("MQTT not connected");
+        return;
+    }
+
+    mode = mode.toUpperCase();
+    updateModeButtons(mode);
+
+    let msg = new Paho.MQTT.Message(mode);
+    msg.destinationName = CMD_TOPIC;
+    msg.qos = 1;
+    client.send(msg);
+
+    addLog("Sent Mode: " + mode);
+}
+
+function updateModeButtons(mode) {
+    document.querySelectorAll('.m-btn').forEach(b => b.classList.remove('m-active'));
+    const btn = document.getElementById("b-" + mode.toUpperCase());
+    if(btn) btn.classList.add('m-active');
+}
+
+function calculateDistance() {
+    if(!userPos) return;
+    let d = map.distance(userPos, trackerPos);
+    document.getElementById('dist-display').innerText =
+        "Distance: " + (d > 1000 ? (d/1000).toFixed(2)+" km" : Math.round(d)+" m");
+}
+
+function toggleFence() {
+    if(fence) {
+        map.removeLayer(fence);
+        fence = null;
+        document.getElementById('f-btn').classList.remove('active-glow');
+        addLog("Geofence Off");
+    } else {
+        fence = L.circle(trackerPos,{radius:60,color:'#34C759',fillOpacity:0.1}).addTo(map);
+        document.getElementById('f-btn').classList.add('active-glow');
+        addLog("Geofence On");
+    }
+}
+
+function checkGeofence() {
+    if(!fence) return;
+    let d = map.distance(trackerPos, fence.getLatLng());
+    document.body.style.border = d > 60 ? "5px solid #FF3B30" : "none";
+}
+
+function showRoute() {
+    if(!userPos) return;
+    if(routing) map.removeControl(routing);
+    routing = L.Routing.control({
+        waypoints:[L.latLng(userPos), L.latLng(trackerPos)],
+        createMarker:() => null,
+        addWaypoints:false,
+        show:false
+    }).addTo(map);
+}
+
+function centerMap() {
+    map.flyTo(trackerPos, 18);
+}
+
+function toggleLogs() {
+    let p = document.getElementById('log-panel');
+    p.style.display = p.style.display === 'block' ? 'none' : 'block';
+    document.getElementById('l-btn').classList.toggle('active-glow');
+}
+
+function addLog(t) {
+    document.getElementById('log-content').innerHTML =
+        `[${new Date().toLocaleTimeString()}] ${t}<br>` +
+        document.getElementById('log-content').innerHTML;
+}
+
+/* GEOLOCATION */
+navigator.geolocation.watchPosition(p => {
+    userPos = [p.coords.latitude, p.coords.longitude];
+    userMarker.setLatLng(userPos);
+    calculateDistance();
+});
 </script>
+
+</body>
+</html>
