@@ -1,93 +1,8 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Oreo Elite Dashboard</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
-    
-    <style>
-        :root { --blue: #007AFF; --red: #FF3B30; --green: #34C759; --orange: #FF9500; }
-        body { font-family: -apple-system, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: #f0f0f0; }
-        
-        /* Header Section */
-        .header { background: white; padding: 10px 15px; border-bottom: 1px solid #ddd; z-index: 1000; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .top-line { display: flex; justify-content: space-between; align-items: center; }
-        .pill-box { display: flex; gap: 5px; }
-        .pill { padding: 3px 8px; border-radius: 10px; color: white; font-size: 10px; font-weight: bold; text-transform: uppercase; }
-        .bg-green { background: var(--green); }
-        .bg-red { background: var(--red); }
-        .bg-orange { background: var(--orange); }
-        .bg-gray { background: #999; }
-        
-        .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; font-size: 11px; color: #666; margin-top: 8px; text-align: center; }
-        .dist-banner { background: #f0f7ff; text-align: center; font-size: 12px; padding: 6px; border-radius: 8px; margin-top: 8px; color: var(--blue); font-weight: bold; border: 1px solid #d0e3ff; }
-
-        /* Map UI */
-        #map { flex: 1; z-index: 1; }
-        
-        /* Right Side Floating Buttons */
-        .side-menu { position: absolute; right: 15px; top: 150px; display: flex; flex-direction: column; gap: 12px; z-index: 1000; }
-        .btn-circle { width: 52px; height: 52px; border-radius: 50%; border: none; background: white; box-shadow: 0 4px 15px rgba(0,0,0,0.2); font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
-        .btn-circle:active { transform: scale(0.8); }
-        .active-glow { background: var(--blue); color: white; animation: pulse 1.5s infinite; }
-        
-        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.7); } 70% { box-shadow: 0 0 0 12px rgba(0, 122, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0); } }
-
-        /* Logs Panel */
-        #log-panel { display: none; position: fixed; bottom: 85px; left: 15px; right: 15px; height: 150px; background: rgba(255,255,255,0.98); border-radius: 15px; z-index: 2000; padding: 12px; box-shadow: 0 -5px 20px rgba(0,0,0,0.15); overflow-y: auto; font-family: monospace; font-size: 11px; border: 1px solid #ddd; }
-
-        /* Bottom Mode Selector */
-        .mode-bar { background: white; padding: 15px; display: flex; justify-content: space-around; border-top: 1px solid #ddd; z-index: 1000; }
-        .m-btn { border: none; padding: 10px 15px; border-radius: 15px; font-weight: bold; font-size: 11px; background: #eee; cursor: pointer; transition: 0.2s; color: #444; }
-        .m-active { background: var(--blue); color: white; box-shadow: 0 4px 10px rgba(0, 122, 255, 0.3); }
-    </style>
-</head>
-<body>
-
-<div class="header">
-    <div class="top-line">
-        <b style="font-size: 16px;">🐶 OREO PRO</b>
-        <div class="pill-box">
-            <span id="conn-pill" class="pill bg-red">OFFLINE</span>
-            <span id="gps-pill" class="pill bg-gray">GPS: SEARCH</span>
-        </div>
-    </div>
-    <div class="stats-grid">
-        <span>🔋 <b id="bat-txt">--%</b></span>
-        <span>📶 <b id="sig-txt">-- CSQ</b></span>
-        <span>🛰️ <b id="sat-txt">0</b> Sats</span>
-    </div>
-    <div id="dist-display" class="dist-banner">📍 Distance: Calculating...</div>
-    <div style="text-align: center; font-size: 10px; color: #999; margin-top: 4px;">
-        Last Signal: <span id="time-ago">Never</span>
-    </div>
-</div>
-
-<div id="map"></div>
-
-<div class="side-menu">
-    <button class="btn-circle" title="Center on Oreo" onclick="centerMap()">🎯</button>
-    <button id="f-btn" class="btn-circle" title="Toggle Geofence" onclick="toggleFence()">🛡️</button>
-    <button id="l-btn" class="btn-circle" title="View Logs" onclick="toggleLogs()">📜</button>
-    <button class="btn-circle" title="Refresh Page" onclick="window.location.reload()">🔄</button>
-</div>
-
-<div id="log-panel"><b>System Events:</b><hr><div id="log-content"></div></div>
-
-<div class="mode-bar">
-    <button id="b-HOME" class="m-btn" onclick="sendMode('HOME')">HOME</button>
-    <button id="b-WALK" class="m-btn" onclick="sendMode('WALK')">WALK</button>
-    <button id="b-LOST" class="m-btn" onclick="sendMode('LOST')">LOST</button>
-    <button id="b-SAVE" class="m-btn" onclick="sendMode('SAVE')">SAVE</button>
-</div>
-
 <script>
-    const TOPIC = "Oreo_Safe_Tracker";
+    const BASE_TOPIC = "Oreo_Safe_Tracker";
+    const DATA_TOPIC = "Oreo_Safe_Tracker/data";
+    const CMD_TOPIC = "Oreo_Safe_Tracker/setMode";
+
     let trackerPos = [14.5995, 120.9842], userPos = null;
     let lastMsgTime = 0, routing = null, fence = null;
 
@@ -96,7 +11,11 @@
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
 
     // Markers
-    let dogIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/616/616408.png', iconSize: [45, 45] });
+    let dogIcon = L.icon({ 
+        iconUrl: 'https://cdn-icons-png.flaticon.com/512/616/616408.png', 
+        iconSize: [45, 45],
+        iconAnchor: [22, 22] 
+    });
     let dogMarker = L.marker(trackerPos, { icon: dogIcon }).addTo(map);
     let userMarker = L.circleMarker([0,0], { radius: 7, color: 'white', fillColor: '#007AFF', fillOpacity: 1, weight: 2 }).addTo(map);
 
@@ -104,13 +23,26 @@
     const client = new Paho.MQTT.Client("wss://broker.hivemq.com:8884/mqtt", "web_" + Math.random());
     
     client.onMessageArrived = (msg) => {
-        if(msg.destinationName.includes("data")) {
+        // Log all incoming traffic to see if hardware is talking
+        console.log("Arrived: " + msg.destinationName + " | " + msg.payloadString);
+
+        if(msg.destinationName === DATA_TOPIC) {
             let data = JSON.parse(msg.payloadString);
             lastMsgTime = Date.now();
             
             // Update UI Stats
-            document.getElementById('bat-txt').innerText = Math.round((parseFloat(data.bat)-3.4)*125) + "%";
-            document.getElementById('sig-txt').innerText = data.csq + " CSQ";
+            // Conversion: 3.4V (0%) to 4.2V (100%)
+            let batV = parseFloat(data.bat);
+            let batPct = Math.max(0, Math.min(100, Math.round((batV - 3.4) * 125)));
+            document.getElementById('bat-txt').innerText = batPct + "%";
+            
+            // CSQ to Signal Text
+            let csq = parseInt(data.csq);
+            let signalText = "Weak";
+            if(csq > 15) signalText = "Good";
+            if(csq > 25) signalText = "Strong";
+            document.getElementById('sig-txt').innerText = csq + " (" + signalText + ")";
+            
             document.getElementById('sat-txt').innerText = data.sats;
             
             // Update Connection Pill
@@ -123,7 +55,7 @@
             gp.className = data.gps === "FIX" ? "pill bg-green" : "pill bg-orange";
 
             // Update Map Position
-            if(data.lat != "0.0") {
+            if(data.lat !== "0.0") {
                 trackerPos = [parseFloat(data.lat), parseFloat(data.lng)];
                 dogMarker.setLatLng(trackerPos);
                 calculateDistance();
@@ -182,7 +114,7 @@
     
     function toggleLogs() {
         const pan = document.getElementById('log-panel');
-        pan.style.display = pan.style.display === 'block' ? 'none' : 'block';
+        pan.style.display = (pan.style.display === 'block') ? 'none' : 'block';
         document.getElementById('l-btn').classList.toggle('active-glow');
     }
 
@@ -192,8 +124,10 @@
     }
 
     function sendMode(m) {
-        client.send(new Paho.MQTT.Message(m), TOPIC + "/setMode");
-        addLog("Requesting Mode: " + m);
+        let message = new Paho.MQTT.Message(m);
+        message.destinationName = CMD_TOPIC;
+        client.send(message);
+        addLog("Sent Command: " + m);
     }
 
     function updateModeButtons(m) {
@@ -202,31 +136,31 @@
         if(btn) btn.classList.add('m-active');
     }
 
-    // Timer for "Last Seen" and Offline detection
     setInterval(() => {
         if(lastMsgTime === 0) return;
         let diff = Math.floor((Date.now() - lastMsgTime) / 1000);
         document.getElementById('time-ago').innerText = diff < 60 ? diff + "s ago" : Math.floor(diff/60) + "m ago";
         
-        // Mark offline after 2.5 minutes of silence
-        if(diff > 150) {
+        if(diff > 150) { // 2.5 minutes
             document.getElementById('conn-pill').innerText = "OFFLINE";
             document.getElementById('conn-pill').className = "pill bg-red";
         }
     }, 1000);
 
-    // Get User Phone Location
     navigator.geolocation.watchPosition(p => {
         userPos = [p.coords.latitude, p.coords.longitude];
         userMarker.setLatLng(userPos);
         calculateDistance();
     }, (err) => console.log(err), { enableHighAccuracy: true });
 
-    // Connect to Broker
-    client.connect({ useSSL: true, onSuccess: () => {
-        client.subscribe(TOPIC + "/#");
-        addLog("Dashboard Online");
-    }});
+    client.connect({ 
+        useSSL: true, 
+        onSuccess: () => {
+            client.subscribe(BASE_TOPIC + "/#");
+            addLog("Dashboard Connected to Broker");
+        },
+        onFailure: (err) => {
+            addLog("Connection Failed: " + err.errorMessage);
+        }
+    });
 </script>
-</body>
-</html>
